@@ -53,7 +53,7 @@ public class Router {
      * @param updateInterval	Time interval for sending routing updates to neighboring routers (in milli-seconds)
      */
 	public Router(int routerId, String serverName, int serverPort, int updateInterval) {
-		// to be completed
+
 		this.routerId = routerId;
 		this.serverName = serverName;
 		this.serverPort = serverPort;
@@ -81,6 +81,27 @@ public class Router {
 			DvrPacket serverResponse = (DvrPacket) dIn.readObject();
 			processDvr(serverResponse);
 			
+			
+			nexthop = new int[numRouters];
+			
+			//sets up the nexthop vector.
+			for(int i = 0; i<numRouters; i++){
+				
+				if(i==routerId){
+					
+					nexthop[i] = i;
+					
+				}else if(linkcost[i] != DvrPacket.INFINITY){
+					
+					nexthop[i] = linkcost[i];
+					
+				}else{
+					
+					nexthop[i] = -1;
+				}
+				
+			}
+			
 			//start timer
 			timer = new Timer(true);
 			timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
@@ -91,10 +112,7 @@ public class Router {
 			do{
 				
 				packet = (DvrPacket) dIn.readObject();
-				processDvr(packet);
-				
-				//initialize neighbors/next
-				
+				processDvr(packet);				
 				
 			}while(packet.type != DvrPacket.QUIT);
 			
@@ -139,7 +157,10 @@ public class Router {
 				
 				System.out.println("The topology has changed.");
 			}
-		//else it was another router
+			
+		//else it was another router.
+		//need to check if this changes our mincost vector.
+		//if so send it out and reset timer.
 		}else{
 			mincost[dvr.sourceid] = dvr.mincost;
 			
