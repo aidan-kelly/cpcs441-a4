@@ -36,6 +36,10 @@ public class Router {
 	int[] nexthop; // nexthop[i] is the next hop node to reach router i
 	int [][] mincost; // mincost[i] is the mincost vector of router i
 	
+	Timer timer;
+	
+	int numRouters;
+	
 	
 	
 	
@@ -67,8 +71,8 @@ public class Router {
 		
 		try{
 			sock = new Socket(serverName, serverPort);
-			dIn = (ObjectInputStream) sock.getInputStream();
-			dOut = (ObjectOutputStream) sock.getOutputStream();
+			dIn = new ObjectInputStream(sock.getInputStream());
+			dOut = new ObjectOutputStream(sock.getOutputStream());
 			
 			DvrPacket dvr = new DvrPacket(this.routerId, DvrPacket.SERVER, DvrPacket.HELLO);
 			dOut.writeObject(dvr);
@@ -78,6 +82,8 @@ public class Router {
 			processDvr(serverResponse);
 			
 			//start timer
+			timer = new Timer(true);
+			timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
 			
 			
 			//loop until quit
@@ -107,24 +113,64 @@ public class Router {
 		
 		//see who sent the packet
 		//check if it was the server
+		
 		if(dvr.sourceid == DvrPacket.SERVER){
 			
 			if(dvr.type == dvr.HELLO){
-				mincost = new int[dvr.mincost.length][dvr.mincost.length];
+				numRouters = dvr.mincost.length;
+				mincost = new int[numRouters][numRouters];
 				mincost[routerId] = dvr.mincost;
+				linkcost = new int[numRouters];
+				linkcost = dvr.mincost;
+				
 				System.out.println("Finished handshake.");
 				
 			}else if(dvr.type == dvr.QUIT){
 				System.out.println("It's quiting time boys.");
 				
-			}else{
 				
+			//topology has changed here.
+			}else{
+				numRouters = dvr.mincost.length;
+				mincost = new int[numRouters][numRouters];
+				mincost[routerId] = dvr.mincost;
+				linkcost = new int[numRouters];
+				linkcost = dvr.mincost;
+				
+				System.out.println("The topology has changed.");
 			}
 		//else it was another router
 		}else{
+			mincost[dvr.sourceid] = dvr.mincost;
+			
 			
 		}
 		
+		
+	}
+	
+	
+	public void processTimeout(){
+		
+		for(int i = 0; i<numRouters; i++){
+			
+			if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
+				
+			}else{
+				
+				try{
+					
+					DvrPacket toSend = new DvrPacket(routerId,i, 3, mincost[routerId]);
+					dOut.writeObject(toSend);
+					dOut.flush();
+					
+				}catch (Exception e){
+					
+					System.out.println(e.getMessage());
+					
+				}
+			}
+		}
 		
 	}
 
