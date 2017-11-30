@@ -36,6 +36,10 @@ public class Router {
 	int[] nexthop; // nexthop[i] is the next hop node to reach router i
 	int [][] mincost; // mincost[i] is the mincost vector of router i
 	
+	Timer timer;
+	
+	int numRouters;
+	
 	
 	
 	
@@ -49,7 +53,7 @@ public class Router {
      * @param updateInterval	Time interval for sending routing updates to neighboring routers (in milli-seconds)
      */
 	public Router(int routerId, String serverName, int serverPort, int updateInterval) {
-		// to be completed
+
 		this.routerId = routerId;
 		this.serverName = serverName;
 		this.serverPort = serverPort;
@@ -67,8 +71,8 @@ public class Router {
 		
 		try{
 			sock = new Socket(serverName, serverPort);
-			dIn = (ObjectInputStream) sock.getInputStream();
-			dOut = (ObjectOutputStream) sock.getOutputStream();
+			dIn = new ObjectInputStream(sock.getInputStream());
+			dOut = new ObjectOutputStream(sock.getOutputStream());
 			
 			DvrPacket dvr = new DvrPacket(this.routerId, DvrPacket.SERVER, DvrPacket.HELLO);
 			dOut.writeObject(dvr);
@@ -77,18 +81,37 @@ public class Router {
 			DvrPacket serverResponse = (DvrPacket) dIn.readObject();
 			processDvr(serverResponse);
 			
+			
+			nexthop = new int[numRouters];
+			
+			//sets up the nexthop vector.
+			for(int i = 0; i<numRouters; i++){
+				
+				if(i==routerId){
+					
+					nexthop[i] = i;
+					
+				}else if(linkcost[i] != DvrPacket.INFINITY){
+					
+					nexthop[i] = i;
+					
+				}else{
+					
+					nexthop[i] = -1;
+					
+				}
+				
+			}
+			
 			//start timer
-			
-			
+			timer = new Timer(true);
+			timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
 			//loop until quit
 			DvrPacket packet;
 			do{
 				
 				packet = (DvrPacket) dIn.readObject();
-				processDvr(packet);
-				
-				//initialize neighbors/next
-				
+				processDvr(packet);				
 				
 			}while(packet.type != DvrPacket.QUIT);
 			
@@ -99,7 +122,7 @@ public class Router {
 		
 		
 		
-		return new RtnTable();
+		return new RtnTable(mincost[routerId], nexthop);
 	}
 	
 	//method to deal with the DVR packets
@@ -107,24 +130,110 @@ public class Router {
 		
 		//see who sent the packet
 		//check if it was the server
+		
 		if(dvr.sourceid == DvrPacket.SERVER){
 			
 			if(dvr.type == dvr.HELLO){
-				mincost = new int[dvr.mincost.length][dvr.mincost.length];
+				numRouters = dvr.mincost.length;
+				mincost = new int[numRouters][numRouters];
 				mincost[routerId] = dvr.mincost;
+				linkcost = new int[numRouters];
+				linkcost = dvr.mincost;
+				
 				System.out.println("Finished handshake.");
 				
 			}else if(dvr.type == dvr.QUIT){
 				System.out.println("It's quiting time boys.");
 				
+				
+			//topology has changed here.
+			}else{
+				numRouters = dvr.mincost.length;
+				mincost = new int[numRouters][numRouters];
+				mincost[routerId] = dvr.mincost;
+				linkcost = new int[numRouters];
+				linkcost = dvr.mincost;
+				
+				System.out.println("The topology has changed.");
+			}
+			
+		//else it was another router.
+		//need to check if this changes our mincost vector.
+		//if so send it out and reset timer.
+		}else{
+			mincost[dvr.sourceid] = dvr.mincost;
+			
+			boolean localMinCostChanged = false;
+			
+			for(int i = 0; i < numRouters; i++) {
+				
+				if(i == routerId) {
+					continue;
+				}
+				
+
+				if(mincost[routerId][i] > linkcost[dvr.sourceid] + mincost[dvr.sourceid][i]) {
+					mincost[routerId][i] = linkcost[dvr.sourceid] + mincost[dvr.sourceid][i];
+					nexthop[i] = dvr.sourceid;
+					localMinCostChanged = true;
+				}
+					
+			}
+			
+			if(localMinCostChanged) {
+				
+				for(int i = 0; i<numRouters; i++){
+					
+					if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
+						
+					}else{
+						
+						try{
+							
+							DvrPacket toSend = new DvrPacket(routerId,i, 3, mincost[routerId]);
+							dOut.writeObject(toSend);
+							dOut.flush();
+							
+						}catch (Exception e){
+							
+							System.out.println(e.getMessage());
+							
+						}
+					}
+				}
+				
+				timer.cancel();
+				timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
+			
+			
+			}
+		
+		
+		}
+	}
+	
+	
+	public void processTimeout(){
+		
+		for(int i = 0; i<numRouters; i++){
+			
+			if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
+				
 			}else{
 				
+				try{
+					
+					DvrPacket toSend = new DvrPacket(routerId,i, 3, mincost[routerId]);
+					dOut.writeObject(toSend);
+					dOut.flush();
+					
+				}catch (Exception e){
+					
+					System.out.println(e.getMessage());
+					
+				}
 			}
-		//else it was another router
-		}else{
-			
 		}
-		
 		
 	}
 
