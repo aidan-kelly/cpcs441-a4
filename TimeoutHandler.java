@@ -10,8 +10,7 @@ public class TimeoutHandler extends TimerTask {
 		}
 
 		public void run() {
-			this.router.processTimeout();
-			
+			this.router.sendPkts();
 		}
 
 }

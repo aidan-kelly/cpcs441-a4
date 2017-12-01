@@ -35,12 +35,10 @@ public class Router {
 	int [] linkcost ; // linkcost [ i ] is the cost of link to router i
 	int[] nexthop; // nexthop[i] is the next hop node to reach router i
 	int [][] mincost; // mincost[i] is the mincost vector of router i
+	boolean[] neighborMatrix; //code was sending to non-neighbors before, this will simplify it.
 	
 	Timer timer;
-	
-	int numRouters;
-	
-	
+	int numRouters;	
 	
 	
 	
@@ -54,6 +52,7 @@ public class Router {
      */
 	public Router(int routerId, String serverName, int serverPort, int updateInterval) {
 
+		//Initialize all the passed in vars.
 		this.routerId = routerId;
 		this.serverName = serverName;
 		this.serverPort = serverPort;
@@ -67,24 +66,24 @@ public class Router {
      * @return The forwarding table of the router
      */
 	public RtnTable start() {
-		// to be completed
-		
+
+		//open the tcp connection
 		try{
 			sock = new Socket(serverName, serverPort);
 			dIn = new ObjectInputStream(sock.getInputStream());
 			dOut = new ObjectOutputStream(sock.getOutputStream());
 			
+			//send the server our hello pkt
 			DvrPacket dvr = new DvrPacket(this.routerId, DvrPacket.SERVER, DvrPacket.HELLO);
 			dOut.writeObject(dvr);
 			dOut.flush();
 			
+			//process the servers response.
 			DvrPacket serverResponse = (DvrPacket) dIn.readObject();
 			processDvr(serverResponse);
 			
-			
+			//creating the nexthop
 			nexthop = new int[numRouters];
-			
-			//sets up the nexthop vector.
 			for(int i = 0; i<numRouters; i++){
 				
 				if(i==routerId){
@@ -106,22 +105,30 @@ public class Router {
 			//start timer
 			timer = new Timer(true);
 			timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
+			
 			//loop until quit
-			DvrPacket packet;
+			DvrPacket packet = new DvrPacket();
 			do{
-				
-				packet = (DvrPacket) dIn.readObject();
-				processDvr(packet);				
-				
+				try{
+					packet = (DvrPacket) dIn.readObject();
+					processDvr(packet);
+				}catch(Exception e){
+					System.out.println(e.getMessage());;
+				}
+								
 			}while(packet.type != DvrPacket.QUIT);
+			
+			//clean up time
+			dIn.close();
+			dOut.close();
+			timer.cancel();
+			sock.close();
 			
 		}catch(Exception e){
 			System.out.println(e.getMessage());
 		}
 		
-		
-		
-		
+		//returns the table
 		return new RtnTable(mincost[routerId], nexthop);
 	}
 	
@@ -130,30 +137,55 @@ public class Router {
 		
 		//see who sent the packet
 		//check if it was the server
-		
 		if(dvr.sourceid == DvrPacket.SERVER){
 			
+			//if it's the hello pkt
 			if(dvr.type == dvr.HELLO){
+				
+				//set up all the needed arrays
 				numRouters = dvr.mincost.length;
 				mincost = new int[numRouters][numRouters];
 				mincost[routerId] = dvr.mincost;
 				linkcost = new int[numRouters];
 				linkcost = dvr.mincost;
 				
+				//set up a matrix that lets us easily know if a node is a neighbor
+				neighborMatrix = new boolean[numRouters];
+				for(int i =0; i<numRouters; i++){
+					if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
+						neighborMatrix[i] = false;
+					}else{
+						neighborMatrix[i] = true;
+					}
+				}
+				
 				System.out.println("Finished handshake.");
 				
+			//if quit pkt, let user know
 			}else if(dvr.type == dvr.QUIT){
 				System.out.println("It's quiting time boys.");
 				
 				
 			//topology has changed here.
 			}else{
+				
+				//recreate the arrays
 				numRouters = dvr.mincost.length;
 				mincost = new int[numRouters][numRouters];
 				mincost[routerId] = dvr.mincost;
 				linkcost = new int[numRouters];
 				linkcost = dvr.mincost;
 				
+				neighborMatrix = new boolean[numRouters];
+				for(int i =0; i<numRouters; i++){
+					if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
+						neighborMatrix[i] = false;
+					}else{
+						neighborMatrix[i] = true;
+					}
+				}
+				
+				//let user know
 				System.out.println("The topology has changed.");
 			}
 			
@@ -163,7 +195,7 @@ public class Router {
 		}else{
 			mincost[dvr.sourceid] = dvr.mincost;
 			
-			boolean localMinCostChanged = false;
+			//boolean minChanged = false;
 			
 			for(int i = 0; i < numRouters; i++) {
 				
@@ -171,59 +203,37 @@ public class Router {
 					continue;
 				}
 				
-
+				//use the bellman-ford algorithm here
+				//check if what we have (mincost[routerId][i] is less efficent than going to this node and then traveling to i using it's path.
 				if(mincost[routerId][i] > linkcost[dvr.sourceid] + mincost[dvr.sourceid][i]) {
+					
+					//if it is, we need to update our mincost vector to make it as efficent as possible.
 					mincost[routerId][i] = linkcost[dvr.sourceid] + mincost[dvr.sourceid][i];
+					
+					//need to remember what node to go through to get the efficient path
 					nexthop[i] = dvr.sourceid;
-					localMinCostChanged = true;
+					
+					//sending to all neighbors
+					sendPkts();
+					
+					timer.cancel();
+					timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
 				}
 					
 			}
-			
-			if(localMinCostChanged) {
-				
-				for(int i = 0; i<numRouters; i++){
-					
-					if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
-						
-					}else{
-						
-						try{
-							
-							DvrPacket toSend = new DvrPacket(routerId,i, 3, mincost[routerId]);
-							dOut.writeObject(toSend);
-							dOut.flush();
-							
-						}catch (Exception e){
-							
-							System.out.println(e.getMessage());
-							
-						}
-					}
-				}
-				
-				timer.cancel();
-				timer.scheduleAtFixedRate(new TimeoutHandler(this), updateInterval, updateInterval);
-			
-			
-			}
-		
 		
 		}
 	}
 	
-	
-	public void processTimeout(){
+	//what we do when it times out
+	public void sendPkts(){
 		
 		for(int i = 0; i<numRouters; i++){
-			
-			if(linkcost[i] == 0 || linkcost[i] == DvrPacket.INFINITY){
-				
-			}else{
-				
+						
+			if(neighborMatrix[i]){
 				try{
 					
-					DvrPacket toSend = new DvrPacket(routerId,i, 3, mincost[routerId]);
+					DvrPacket toSend = new DvrPacket(routerId,i, DvrPacket.ROUTE, mincost[routerId]);
 					dOut.writeObject(toSend);
 					dOut.flush();
 					
